@@ -28,9 +28,10 @@ CONTOUR_BUFFER = 20
 AREA_LIMIT = 10
 
 class MarkupChecker():
-    def __init__(self, sourcefile:str) -> None:
-        self.sourcefile = sourcefile
-        markup_df = MarkupChecker.highlight_markups(sourcefile)
+    def __init__(self, markupfile:str) -> None:
+        self.markupfile = markupfile
+        self.markup_df = MarkupChecker.find_markups(self.markupfile)
+        MarkupChecker.draw_markup_highlights(self.markupfile,self.markup_df)
         pass
 
     def convert2jpg(filepath:str)->str:
@@ -53,7 +54,7 @@ class MarkupChecker():
         
         image.save(".".join([file_name, ".jpg"]))
 
-    def highlight_markups(dwg:str)->list[str,pd.DataFrame]:
+    def find_markups(dwg:str)->list[str,pd.DataFrame]:
         image = cv2.imread(dwg)
         hsvImage=cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
         
@@ -67,7 +68,8 @@ class MarkupChecker():
             upper = np.array(COLOR_BOUNDARIES[color]["upper"], dtype = "uint8")
             mask = cv2.inRange(hsvImage, lower, upper)
 
-            contours, hierarchy = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+            contours, hierarchy = cv2.findContours(
+                mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
             coord_lst = []
             for c in contours:
                 x, y, w, h  = cv2.boundingRect(c)
@@ -76,20 +78,13 @@ class MarkupChecker():
             rects, _, _ = MarkupChecker.clusterize(coord_lst, buffer = CONTOUR_BUFFER)
             contour_dict["color"] += [color] * len(rects)
             contour_dict["coords"] += rects
-            for rect in rects:
-                cv2.rectangle(cimage,(rect[0],rect[1]),(rect[2],rect[3]),HIGHLIGHT_COLOR, 2)
-            cv2.imshow(f"Markups Highlighted: {color.upper()}", cimage)
-            cv2.waitKey(1000)
+            cv2.waitKey(0)
 
         # Draws rectangles around all contours
-        rectangles, types, tags = MarkupChecker.clusterize(contour_dict["coords"], type_lst = contour_dict["color"], 
-                                                           tag_lst=contour_dict["color"], buffer = CONTOUR_BUFFER)
-        for num, rect in enumerate(rectangles):
-            cv2.rectangle(image,(rect[0],rect[1]),(rect[2],rect[3]),HIGHLIGHT_COLOR, 2)
-            cv2.putText(image,str(num+1),(rect[0]+5,rect[1]+20), cv2.FONT_HERSHEY_SIMPLEX, .5,HIGHLIGHT_COLOR,1,cv2.LINE_AA)
+        rectangles, types, tags = MarkupChecker.clusterize(
+            contour_dict["coords"], type_lst = contour_dict["color"], 
+            tag_lst=contour_dict["color"], buffer = CONTOUR_BUFFER)
 
-        cv2.imshow("Markups Highlighted", image)
-        cv2.waitKey(10000)
         return pd.DataFrame({"color":types, "coords":rectangles, "tags":tags}).reset_index()
     
     # region Rectangle Clustering
@@ -98,6 +93,7 @@ class MarkupChecker():
         clusters = []
         tags = []
         types = []
+        
         matched_count = 0
         for num, rect in enumerate(rect_lst):
             matched = False
@@ -157,8 +153,20 @@ class MarkupChecker():
     
     # endregion
 
+    def draw_markup_highlights(img_file:str, markup_df:pd.DataFrame):
+        image = cv2.imread(img_file)
+        for row in markup_df.iloc:
+            rect = row['coords']
+            cv2.rectangle(image,(rect[0],rect[1]),(rect[2],rect[3]),HIGHLIGHT_COLOR, 2)
+            cv2.putText(image,str(row["index"]+1),(rect[0]+5,rect[1]+20), 
+                        cv2.FONT_HERSHEY_SIMPLEX, .5,HIGHLIGHT_COLOR,1,cv2.LINE_AA)
+        
+        cv2.imshow("Markups Highlighted", image)
+        
+        cv2.imwrite(pathlib.Path(img_file).stem + "Highlighted.jpg", image)
+        cv2.waitKey(10000)
+
     def compare_drawings(dwg1:str, dwg2:str)->None:
         pass
-
 
 MarkupChecker("SchematicTestMarkUp.jpg")
