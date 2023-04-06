@@ -499,7 +499,7 @@ class QualityChecker(Program):
 
         width,height,_ = image.shape
         imArea=width*height
-        if imArea<1000000:
+        if imArea<1_000_000:
             imScale=50
             self.frameSize=4
             boarderSpace=10
