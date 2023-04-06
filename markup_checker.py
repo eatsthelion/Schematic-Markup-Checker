@@ -19,19 +19,18 @@ from pdf2image import convert_from_path
 POPPLER = r"\poppler-21.03.0\Library\bin"
 HIGHLIGHT_COLOR = (255,0,255)
 COLOR_BOUNDARIES = {
-    "red":{"lower":[0, 20, 20], "upper":[20, 255, 255]},
-    "green":{"lower":[36, 25, 25], "upper":[102, 255, 255]},
-    "blue":{"lower":[30, 50, 60], "upper":[140, 255, 255]},
-    "yellow":{"lower":[0, 100, 100], "upper":[30, 255, 255]},
+    "red":{"lower":[0, 50, 50], "upper":[20, 255, 255]},
+    "green":{"lower":[36, 40, 35], "upper":[102, 255, 255]},
+    "blue":{"lower":[110,50,50], "upper":[140, 255, 255]},
+    "yellow":{"lower":[20, 100, 100], "upper":[30, 255, 255]},
 }
-CONTOUR_BUFFER = 10
+CONTOUR_BUFFER = 20
 AREA_LIMIT = 10
 
 class MarkupChecker():
     def __init__(self, sourcefile:str) -> None:
         self.sourcefile = sourcefile
-        MarkupChecker.highlight_markups(sourcefile)
-        
+        markup_df = MarkupChecker.highlight_markups(sourcefile)
         pass
 
     def convert2jpg(filepath:str)->str:
@@ -63,6 +62,7 @@ class MarkupChecker():
         # loop over the boundaries
         # finds the contours of each color
         for color in COLOR_BOUNDARIES:
+            cimage = cv2.imread(dwg)
             lower = np.array(COLOR_BOUNDARIES[color]["lower"], dtype = "uint8")
             upper = np.array(COLOR_BOUNDARIES[color]["upper"], dtype = "uint8")
             mask = cv2.inRange(hsvImage, lower, upper)
@@ -73,55 +73,80 @@ class MarkupChecker():
                 x, y, w, h  = cv2.boundingRect(c)
                 coord_lst.append([x, y, x+w, y+h])
 
-            rects = MarkupChecker.clusterize(coord_lst, CONTOUR_BUFFER)
+            rects, _, _ = MarkupChecker.clusterize(coord_lst, buffer = CONTOUR_BUFFER)
             contour_dict["color"] += [color] * len(rects)
             contour_dict["coords"] += rects
-            cv2.waitKey(0)
+            for rect in rects:
+                cv2.rectangle(cimage,(rect[0],rect[1]),(rect[2],rect[3]),HIGHLIGHT_COLOR, 2)
+            cv2.imshow(f"Markups Highlighted: {color.upper()}", cimage)
+            cv2.waitKey(1000)
 
         # Draws rectangles around all contours
-        rectangles = MarkupChecker.clusterize(contour_dict["coords"], CONTOUR_BUFFER)
-        for rect in rectangles:
+        rectangles, types, tags = MarkupChecker.clusterize(contour_dict["coords"], type_lst = contour_dict["color"], 
+                                                           tag_lst=contour_dict["color"], buffer = CONTOUR_BUFFER)
+        for num, rect in enumerate(rectangles):
             cv2.rectangle(image,(rect[0],rect[1]),(rect[2],rect[3]),HIGHLIGHT_COLOR, 2)
-
-        #df = pd.DataFrame({"color":, "coords":rectangles})
-        #print(df)
+            cv2.putText(image,str(num+1),(rect[0]+5,rect[1]+20), cv2.FONT_HERSHEY_SIMPLEX, .5,HIGHLIGHT_COLOR,1,cv2.LINE_AA)
 
         cv2.imshow("Markups Highlighted", image)
         cv2.waitKey(10000)
-        return
+        return pd.DataFrame({"color":types, "coords":rectangles, "tags":tags}).reset_index()
     
-    # region Clustering
-    def clusterize(rect_lst:list, buffer:int=1)->list:
+    # region Rectangle Clustering
+    def clusterize(rect_lst:list, type_lst:list = [], tag_lst:list = [], buffer:int=1)->list:
+        """Creates a list of clusted rectangles"""
         clusters = []
         tags = []
+        types = []
         matched_count = 0
         for num, rect in enumerate(rect_lst):
-            
             matched = False
             for cnum, cluster in enumerate(clusters):
+                # Checks if the cluster and rectangle are matching type
+                if type_lst and types:
+                    if type_lst[num] != types[cnum]: continue
+
                 # Checks if the rectangles and cluster overlap
                 if MarkupChecker.rect_overlaps(rect, cluster):
                     matched = True
                     matched_count += 1
                     
                     # Updates cluster size
+                    # buffer is used to help catch neighbors that are close to rectangle area
                     cluster[0] = min(cluster[0], rect[0]-buffer)
                     cluster[1] = min(cluster[1], rect[1]-buffer)
                     cluster[2] = max(cluster[2], rect[2]+buffer)
                     cluster[3] = max(cluster[3], rect[3]+buffer)
-            
+
+                    if tag_lst:
+                        if isinstance(tag_lst[num], list): tags[cnum] += tag_lst[num] 
+                        else: tags[cnum].append(tag_lst[num])
+                    
             # Creates new clusters
             if not matched:
                 # Filters out rectangles that are too small
                 if (rect[2]-rect[0])*(rect[3]-rect[1])<AREA_LIMIT: continue
+
+                # Adds tags to the cluster
+                if tag_lst: 
+                    if isinstance(tag_lst[num], list): tags += [tag_lst[num]]
+                    else: tags.append([tag_lst[num]])
+                
+                # Adds typing to cluster
+                if type_lst: types.append(type_lst[num])
+
                 clusters.append(rect)
+
+        # Removes duplicate tags 
+        if tag_lst: return_tag = [list(set(x)) for x in tags]
+        else: return_tag = []
 
         # If there were matched clusters in this iteration, the function 
         # recurses to get rid of any overlaping existing clusters
         if matched_count>0:
-            return MarkupChecker.clusterize(clusters)
+            return MarkupChecker.clusterize(clusters, tag_lst=return_tag, type_lst=types)
         else:
-            return clusters
+            return clusters, types, return_tag
         
     def range_overlap(a_min, a_max, b_min, b_max)->bool:
         return (a_min <= b_max) and (b_min <a_max)
