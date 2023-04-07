@@ -6,14 +6,12 @@
 # Module Installs: PIL (pillow), pandas, cv2 (opencv-python), pdf2image
 ################################################################################
 
-import os
 import cv2
 import pathlib
 import pandas as pd
 import numpy as np
 
-from PIL import Image, ImageChops, ImageTk
-
+from PIL import Image
 from pdf2image import convert_from_path
 
 POPPLER = r"\poppler-21.03.0\Library\bin"
@@ -27,11 +25,17 @@ COLOR_BOUNDARIES = {
 CONTOUR_BUFFER = 20
 AREA_LIMIT = 10
 
+# Alignment Macros
+MAX_FEATURES = 500
+GOOD_MATCH_PERCENT = 0.15
+
 class MarkupChecker():
-    def __init__(self, markupfile:str) -> None:
+    def __init__(self, markupfile:str, correctfile:str) -> None:
         self.markupfile = markupfile
+        self.correctfile = correctfile
+        self.aligned_img = MarkupChecker.align_drawings(self.markupfile, self.correctfile)
         self.markup_df = MarkupChecker.find_markups(self.markupfile)
-        MarkupChecker.draw_markup_highlights(self.markupfile,self.markup_df)
+        MarkupChecker.draw_markup_highlights(self.aligned_img,self.markup_df)
         pass
 
     def convert2jpg(filepath:str)->str:
@@ -52,9 +56,12 @@ class MarkupChecker():
             image = Image.open(filepath)
             image = image.convert('RGB')
         
-        image.save(".".join([file_name, ".jpg"]))
+        outputfile = ".".join([file_name, ".jpg"])
+        image.save(outputfile)
+        return outputfile
 
-    def find_markups(dwg:str)->list[str,pd.DataFrame]:
+    def find_markups(dwg:str)->pd.DataFrame:
+        """Finds the markups and outputs a dataframe of ROI data"""
         image = cv2.imread(dwg)
         hsvImage=cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
         
@@ -63,31 +70,27 @@ class MarkupChecker():
         # loop over the boundaries
         # finds the contours of each color
         for color in COLOR_BOUNDARIES:
-            cimage = cv2.imread(dwg)
             lower = np.array(COLOR_BOUNDARIES[color]["lower"], dtype = "uint8")
             upper = np.array(COLOR_BOUNDARIES[color]["upper"], dtype = "uint8")
             mask = cv2.inRange(hsvImage, lower, upper)
 
-            contours, hierarchy = cv2.findContours(
-                mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+            contours, hierarchy = cv2.findContours(mask, cv2.RETR_TREE, 
+                                                   cv2.CHAIN_APPROX_SIMPLE)
             coord_lst = []
             for c in contours:
                 x, y, w, h  = cv2.boundingRect(c)
                 coord_lst.append([x, y, x+w, y+h])
 
-            rects, _, _ = MarkupChecker.clusterize(coord_lst, buffer = CONTOUR_BUFFER)
+            # Creating ROIs for clusters
+            rects, _, _ = MarkupChecker.clusterize(
+                coord_lst, type_lst=[color] * len(contours), buffer = CONTOUR_BUFFER)
             contour_dict["color"] += [color] * len(rects)
             contour_dict["coords"] += rects
-            cv2.waitKey(0)
 
-        # Draws rectangles around all contours
-        rectangles, types, tags = MarkupChecker.clusterize(
-            contour_dict["coords"], type_lst = contour_dict["color"], 
-            tag_lst=contour_dict["color"], buffer = CONTOUR_BUFFER)
-
-        return pd.DataFrame({"color":types, "coords":rectangles, "tags":tags}).reset_index()
+        return pd.DataFrame({"color":contour_dict["color"], 
+                             "coords":contour_dict["coords"]}).reset_index()
     
-    # region Rectangle Clustering
+    # region ROI Clustering
     def clusterize(rect_lst:list, type_lst:list = [], tag_lst:list = [], buffer:int=1)->list:
         """Creates a list of clusted rectangles"""
         clusters = []
@@ -109,10 +112,10 @@ class MarkupChecker():
                     
                     # Updates cluster size
                     # buffer is used to help catch neighbors that are close to rectangle area
-                    cluster[0] = min(cluster[0], rect[0]-buffer)
-                    cluster[1] = min(cluster[1], rect[1]-buffer)
-                    cluster[2] = max(cluster[2], rect[2]+buffer)
-                    cluster[3] = max(cluster[3], rect[3]+buffer)
+                    cluster[0] = min(cluster[0], rect[0]-buffer) #x1
+                    cluster[1] = min(cluster[1], rect[1]-buffer) #y1
+                    cluster[2] = max(cluster[2], rect[2]+buffer) #x2
+                    cluster[3] = max(cluster[3], rect[3]+buffer) #y2
 
                     if tag_lst:
                         if isinstance(tag_lst[num], list): tags[cnum] += tag_lst[num] 
@@ -153,20 +156,72 @@ class MarkupChecker():
     
     # endregion
 
-    def draw_markup_highlights(img_file:str, markup_df:pd.DataFrame):
-        image = cv2.imread(img_file)
+    def draw_markup_highlights(img_file:str or np.ndarray, markup_df:pd.DataFrame, show=False):
+        if isinstance(img_file, np.ndarray):
+            image = img_file
+        else: 
+            image = cv2.imread(img_file)
+
         for row in markup_df.iloc:
             rect = row['coords']
             cv2.rectangle(image,(rect[0],rect[1]),(rect[2],rect[3]),HIGHLIGHT_COLOR, 2)
             cv2.putText(image,str(row["index"]+1),(rect[0]+5,rect[1]+20), 
                         cv2.FONT_HERSHEY_SIMPLEX, .5,HIGHLIGHT_COLOR,1,cv2.LINE_AA)
         
-        cv2.imshow("Markups Highlighted", image)
-        
-        cv2.imwrite(pathlib.Path(img_file).stem + "Highlighted.jpg", image)
-        cv2.waitKey(10000)
+        if show:
+            cv2.imshow("Markups Highlighted", image)
+        return image        
 
     def compare_drawings(dwg1:str, dwg2:str)->None:
         pass
 
-MarkupChecker("SchematicTestMarkUp.jpg")
+    def align_drawings(dwg1:str, dwg2:str)->cv2:
+        """Aligns two similar images together
+        @dwg1: reference image, the image that stays the same
+        @dwg2: the image that will be aligned"""
+
+        ref_img = cv2.imread(dwg1, cv2.IMREAD_COLOR)
+        input_img = cv2.imread(dwg2, cv2.IMREAD_COLOR)
+
+        # Detect ORB features and compute descriptors.
+        orb = cv2.ORB_create(MAX_FEATURES)
+        keypoints1, descriptors1 = orb.detectAndCompute(
+            cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY), None)
+        keypoints2, descriptors2 = orb.detectAndCompute(
+            cv2.cvtColor(input_img, cv2.COLOR_BGR2GRAY), None)
+
+        # Match features.
+        matcher = cv2.DescriptorMatcher_create(cv2.DESCRIPTOR_MATCHER_BRUTEFORCE_HAMMING)
+        matches = matcher.match(descriptors2, descriptors1, None)
+
+        # Sort matches by score
+        matches.sort(key=lambda x: x.distance, reverse=False)
+
+        # Remove bad matches
+        numGoodMatches = int(len(matches) * GOOD_MATCH_PERCENT)
+        matches = matches[:numGoodMatches]
+
+        # Draw top matches
+        img_matches = cv2.drawMatches(ref_img, keypoints2, input_img, keypoints1, matches, None)
+
+        # Extract location of good matches
+        points1 = np.zeros((len(matches), 2), dtype=np.float32)
+        points2 = np.zeros((len(matches), 2), dtype=np.float32)
+
+        for i, match in enumerate(matches):
+            points2[i, :] = keypoints2[match.queryIdx].pt
+            points1[i, :] = keypoints1[match.trainIdx].pt
+
+        # Find homography
+        h, mask = cv2.findHomography(points2, points1, cv2.RANSAC)
+
+        # Use homography to warp and align input image
+        height, width, _ = ref_img.shape
+        output_img = cv2.warpPerspective(input_img, h, (width, height))
+
+        return output_img, img_matches
+
+
+
+if __name__ == "__main__":
+    MarkupChecker("SchematicTestMarkUp.jpg", "SchematicTest.jpg")

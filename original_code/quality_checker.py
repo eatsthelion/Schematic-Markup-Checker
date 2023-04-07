@@ -90,10 +90,8 @@ class QualityChecker(Program):
 
         self.loadtrigger=True
 
-
-
     def getFile(self,pathway):
-        import_file_path= filedialog.askopenfilename(filetypes=(("PDF","*.pdf"),("JPEG","*.jpg"),("all files","*.*")))
+        import_file_path= filedialog.askopenfilename(filetypes=(("JPEG","*.jpg"),("PDF","*.pdf"),("all files","*.*")))
         if (import_file_path==""):
             return
 
