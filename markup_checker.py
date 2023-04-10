@@ -7,20 +7,20 @@
 ################################################################################
 
 import cv2
+import fitz
 import pathlib
 import pandas as pd
 import numpy as np
-
 from PIL import Image
-from pdf2image import convert_from_path
 
 POPPLER = r"\poppler-21.03.0\Library\bin"
 HIGHLIGHT_COLOR = (255,0,255)
 COLOR_BOUNDARIES = {
-    "red":{"lower":[0, 50, 50], "upper":[20, 255, 255]},
-    "green":{"lower":[36, 40, 35], "upper":[102, 255, 255]},
-    "blue":{"lower":[110,50,50], "upper":[140, 255, 255]},
-    "yellow":{"lower":[20, 100, 100], "upper":[30, 255, 255]},
+    "red1":{"lower":[0, 50, 50], "upper":[10, 255, 255]},
+    "red2":{"lower":[170, 50, 50], "upper":[180, 255, 255]},
+    "green":{"lower":[40, 50, 50], "upper":[85, 255, 255]},
+    "blue":{"lower":[86,50,50], "upper":[140, 255, 255]},
+    "yellow":{"lower":[20, 50, 50], "upper":[35, 255, 255]},
 }
 CONTOUR_BUFFER = 20
 AREA_LIMIT = 10
@@ -30,38 +30,38 @@ MAX_FEATURES = 500
 GOOD_MATCH_PERCENT = 0.15
 
 class MarkupChecker():
-    def __init__(self, markupfile:str, correctfile:str) -> None:
-        self.markupfile = markupfile
-        self.correctfile = correctfile
-        self.aligned_img = MarkupChecker.align_drawings(self.markupfile, self.correctfile)
-        self.markup_df = MarkupChecker.find_markups(self.markupfile)
-        MarkupChecker.draw_markup_highlights(self.aligned_img,self.markup_df)
-        pass
-
-    def convert2jpg(filepath:str)->str:
+    def convert2jpg(filepath:str, save=True)->str:
         file_name = pathlib.Path(filepath).stem
         file_ext = pathlib.Path(filepath).suffix.lower()
-        print(file_name)
 
         if file_ext not in [".jpg", ".jpeg", ".pdf", ".png", ".tiff"]:
             return False
         
         if (file_ext == ".jpg") or (file_ext == ".jpeg"):
             return filepath
-        elif (file_ext == ".pdf"):
+        
+        outputfile = "".join([file_name, ".jpg"])
+        if not save:
+            return outputfile
+        
+        if (file_ext == ".pdf"):
             # If the file is a pdf, we only want the first page as an image
-            images = convert_from_path(filepath,poppler_path=POPPLER)
-            image = images[0]
+            doc = fitz.open(filepath)
+            zoom = 1
+            mat = fitz.Matrix(zoom, zoom)
+            page = doc.load_page(0)
+            pix = page.get_pixmap(matrix = mat)
+            pix.save(outputfile)
+            doc.close()
         else:
             image = Image.open(filepath)
             image = image.convert('RGB')
-        
-        outputfile = ".".join([file_name, ".jpg"])
-        image.save(outputfile)
+            image.save(outputfile)
         return outputfile
 
     def find_markups(dwg:str)->pd.DataFrame:
         """Finds the markups and outputs a dataframe of ROI data"""
+        dwg = MarkupChecker.convert2jpg(dwg)
         image = cv2.imread(dwg)
         hsvImage=cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
         
@@ -160,6 +160,7 @@ class MarkupChecker():
         if isinstance(img_file, np.ndarray):
             image = img_file
         else: 
+            img_file = MarkupChecker.convert2jpg(img_file, save = False)
             image = cv2.imread(img_file)
 
         for row in markup_df.iloc:
@@ -224,4 +225,4 @@ class MarkupChecker():
 
 
 if __name__ == "__main__":
-    MarkupChecker("SchematicTestMarkUp.jpg", "SchematicTest.jpg")
+    pass
