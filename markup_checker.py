@@ -11,7 +11,7 @@ import fitz
 import pathlib
 import pandas as pd
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageTk
 
 POPPLER = r"\poppler-21.03.0\Library\bin"
 HIGHLIGHT_COLOR = (255,0,255)
@@ -192,6 +192,9 @@ class MarkupChecker():
         @dwg1: reference image, the image that stays the same
         @dwg2: the image that will be aligned"""
 
+        dwg1 = MarkupChecker.convert2jpg(dwg1)
+        dwg2 = MarkupChecker.convert2jpg(dwg2)
+
         ref_img = cv2.imread(dwg1, cv2.IMREAD_COLOR)
         input_img = cv2.imread(dwg2, cv2.IMREAD_COLOR)
 
@@ -232,6 +235,47 @@ class MarkupChecker():
         output_img = cv2.warpPerspective(input_img, h, (width, height))
 
         return output_img, img_matches
+    
+    def cv2_to_Image(image:np.ndarray):
+        b,g,r = cv2.split(image)
+        img = cv2.merge((r,g,b))
+        img = Image.fromarray(img)
+        return img
+    
+    def crop_images(r_img:str or Image or np.ndarray, c_img:str or Image or np.ndarray,
+                    rect:tuple or list, cropsize = 250)->list:
+        # Opens images as Image objects
+        if isinstance(r_img, str):
+            r_img = Image.open(r_img)
+        elif isinstance(r_img, np.ndarray):
+            r_img = MarkupChecker.cv2_to_Image(r_img)
+        
+        if isinstance(c_img, str):
+            c_img = Image.open(c_img)
+        elif isinstance(c_img, np.ndarray):
+            c_img = MarkupChecker.cv2_to_Image(c_img)
+
+        # Calculates the image sizes
+        width = rect[2] - rect[0]
+        height = rect[3] - rect[1]
+        ratio = width/height
+        new_width = cropsize
+        new_height = cropsize/ratio
+
+        if new_height>cropsize:
+            new_height = cropsize
+            new_width = cropsize*ratio
+
+        new_size = (int(new_width),int(new_height))
+
+        # Crops and resizes images
+        r_img = r_img.crop(rect)
+        r_img = r_img.resize(new_size)
+
+        c_img = c_img.crop(rect)
+        c_img = c_img.resize(new_size)
+
+        return r_img, c_img
 
 
 

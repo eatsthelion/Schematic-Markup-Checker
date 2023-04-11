@@ -1,11 +1,12 @@
 import os
+import cv2
 import pathlib
+import numpy as np
 import pandas as pd
 import tkinter as tk
-import cv2
 
-from tkinter import LEFT, W, NS, EW, NORMAL, DISABLED, CENTER, filedialog
-from PIL import Image, ImageChops, ImageTk
+from PIL import Image, ImageTk
+from tkinter import LEFT, W, NS, EW, NORMAL, DISABLED, filedialog, END
 
 from markup_checker import MarkupChecker
 
@@ -69,8 +70,10 @@ class MarkupCheckerGUI:
         markedLabel             .grid(row=1, column=0)
         self.markedEntry        .grid(row=1, column=1, sticky = NS, pady=5)
         self.browseButton2      .grid(row=1, column=2, padx=5, pady=5, sticky=EW)
-        self.checkButton        .grid(row=6, column=0, columnspan=3, padx=5, pady=5,sticky=EW)
-        self.highlightButton    .grid(row=7, column=0, columnspan=3, padx=5, pady=5,sticky=EW)
+        self.checkButton        .grid(row=6, column=0, columnspan=3, padx=5, pady=5,
+                                      sticky=EW)
+        self.highlightButton    .grid(row=7, column=0, columnspan=3, padx=5, pady=5,
+                                      sticky=EW)
 
         self.markedEntry.config(state=DISABLED)
         self.correctedEntry.config(state=DISABLED)
@@ -103,41 +106,43 @@ class MarkupCheckerGUI:
         return import_file_path
 
     def start_operation(self)->None:
-        markup_file = self.markupfile
-        correct_file = self.correctionfile
+        self.markupfile = MarkupChecker.convert2jpg(self.markupfile)
+        self.correctionfile = MarkupChecker.convert2jpg(self.correctionfile)
 
-        if (not os.path.exists(markup_file)):
-            tk.messagebox.showwarning('Error','File {} does not exist'.format(markup_file),icon = 'error')
+        if (not os.path.exists(self.markupfile)):
+            tk.messagebox.showwarning('Error','File {} does not exist'.format(self.markupfile),icon = 'error')
             return
-        if (not os.path.exists(correct_file)):
-            tk.messagebox.showwarning('Error','File {} does not exist'.format(correct_file),icon = 'error')
+        if (not os.path.exists(self.correctionfile)):
+            tk.messagebox.showwarning('Error','File {} does not exist'.format(self.correctionfile),icon = 'error')
             return
         
-        self.aligned_img, matched_img = MarkupChecker.align_drawings(markup_file,correct_file)
-        correct_df = MarkupChecker.find_markups(markup_file)
+        self.aligned_img, matched_img = MarkupChecker.align_drawings(self.markupfile,self.correctionfile)
+        correct_df = MarkupChecker.find_markups(self.markupfile)
         if len(correct_df)<1:
             tk.messagebox.showwarning('Done',"No Markups found.")
             return 
-        CheckerWindowGUI(self, correct_df)
-        #MarkupChecker.draw_markup_highlights(aligned_img,correct_df, show=True)
+        CheckerWindowGUI(self, correct_df, self.markupfile, self.aligned_img)
 
     def highlight_markups(self)->None:
-        markup_file = self.markupfile
-        m_filename = pathlib.Path(markup_file).stem
-        if (not os.path.exists(markup_file)):
-            tk.messagebox.showwarning('Error','File {} does not exist'.format(markup_file),icon = 'error')
+        self.markupfile = self.markupfile
+        m_filename = pathlib.Path(self.markupfile).stem
+        if (not os.path.exists(self.markupfile)):
+            tk.messagebox.showwarning('Error','File {} does not exist'.format(self.markupfile),icon = 'error')
             return
         
-        correct_df = MarkupChecker.find_markups(markup_file)
-        markup_img = MarkupChecker.draw_markup_highlights(markup_file,correct_df)
+        correct_df = MarkupChecker.find_markups(self.markupfile)
+        markup_img = MarkupChecker.draw_markup_highlights(self.markupfile,correct_df)
         downloads = str(pathlib.Path.home()/"Downloads")
-        highlight_output = str(pathlib.Path.home()/"Downloads"/"".join([m_filename,"_Highlighted.jpg"]))
+        highlight_output = downloads + "/" + str("".join([m_filename,"_Highlighted.jpg"]))
         cv2.imwrite(highlight_output, markup_img)
         os.startfile(highlight_output)
 
 class CheckerWindowGUI:
-    def __init__(self, master, df:pd.DataFrame) -> None:
+    def __init__(self, master, df:pd.DataFrame, markup:str,
+                 correctfile:str or Image or np.ndarray) -> None:
         self.master = master
+        self.markupfile = markup
+        self.correctfile = correctfile
         self.df = df
 
         bgcolor = "#7f007f"
@@ -148,8 +153,6 @@ class CheckerWindowGUI:
         self.compareWindow.grab_set()
         self.compareWindow.config(bg=bgcolor)
 
-        self.cur_c= 0
-
         checkFrame=tk.Frame(self.compareWindow,bg=bgcolor)
         checkFrame.pack()
 
@@ -158,29 +161,37 @@ class CheckerWindowGUI:
         imageframe1=tk.Frame(reference_frame,bg=bgcolor,width=400,height=400)
         imageframe2=tk.Frame(reference_frame,bg=bgcolor,width=400,height=400)
 
-        panel2_label=tk.Label(reference_frame,text="Corrected Image",bg=bgcolor,font=('arial black', 12))
-        panel1_label=tk.Label(reference_frame,text="Marked Image",bg=bgcolor,font=('arial black', 12))
+        panel2_label=tk.Label(reference_frame,text="Corrected Image",
+                              bg=bgcolor,font=('arial black', 12))
+        panel1_label=tk.Label(reference_frame,text="Marked Image",
+                              bg=bgcolor,font=('arial black', 12))
 
         self.image_cont1=tk.Label(imageframe1)
         self.image_cont2=tk.Label(imageframe2)
-        self.prompt_label=tk.Label(checkFrame,
-                                   text="Have the corrections in this section been made?", bg=bgcolor,font=('arial black', 18))
+        self.prompt_label=tk.Label(checkFrame,bg=bgcolor,font=('arial black', 18),
+                                   text="Was this correction picked up?")
         self.correction_label=tk.Label(checkFrame, bg=bgcolor,font=('arial black', 18))
         
         self.inputbox = tk.Entry(checkFrame, exportselection=0)
 
-        self.submitButton=tk.Button(checkFrame,text='Submit', 
-                                    command=None, bg='yellow', fg='black', 
+        self.nextButton=tk.Button(checkFrame,text='Next', 
+                                    command=self.go_next, bg='gold2', fg='black', 
                                     font=('helvetica', 12, 'bold'))
-        self.cancelButton=tk.Button(checkFrame,text='Cancel', command=None, 
-                                    bg='gray', fg='white', 
+        self.backButton=tk.Button(checkFrame, command=self.go_back, 
+                                    bg='gold2', fg='black', text = "Back",
                                     font=('helvetica', 12, 'bold'))
-        self.confirmButton = tk.Button(checkFrame,text='       Yes        ', 
-                                       command=self.next_mark, bg='Green', 
-                                       fg='white', font=('helvetica', 12, 'bold'))
-        self.declineButton = tk.Button(checkFrame,text='        No        ', 
-                                       command=None, bg='Red', fg='white',
-                                       font=('helvetica', 12, 'bold'))
+        self.confirmButton = tk.Button(checkFrame,text='Yes', 
+                                       command=lambda m=True: self.confirm_correction(m),
+                                       bg='Green', fg='white', font=('helvetica', 12, 'bold'))
+        self.declineButton = tk.Button(checkFrame,text='No', 
+                                       command=lambda m=False: self.confirm_correction(m), 
+                                       bg='Red', fg='white', font=('helvetica', 12, 'bold'))
+        
+        comment_label = tk.Label(checkFrame, bg=bgcolor,font=('arial black', 18), 
+                                 text="Comments:")
+        
+        self.comment_entry = tk.Text(checkFrame, font=('helvetica', 10, 'bold'),
+                                     height = 5)
         
         panel1_label.grid(row=0,column=0)
         panel2_label.grid(row=0,column=1)
@@ -193,45 +204,32 @@ class CheckerWindowGUI:
 
         reference_frame.grid(row=0,column=0,columnspan=2)
 
-        self.prompt_label.grid(row=3, column=0, columnspan=2)
-        self.correction_label.grid(row=2, column=0, columnspan=2)
-        self.confirmButton.grid(row=4,column=0)
-        self.declineButton.grid(row=4,column=1)
+        #self.nextButton.grid(row=2,column=1, sticky=tk.E, padx=(0,5))
+        self.backButton.grid(row = 2, column=0, sticky=W, padx=(5,0))
+        self.correction_label.grid(row=2, column=0, columnspan=2, pady = (5,0))
+        self.prompt_label.grid(row=3, column=0, columnspan=2, padx = 5)
 
-        self.next_mark()
+        self.confirmButton.grid(row=4,column=0, padx=5, sticky=EW)
+        self.declineButton.grid(row=4,column=1, padx=5, sticky=EW)
 
-    def next_mark(self):
-        if self.cur_c >= len(self.df):
-            return
+        comment_label.grid(row=5, column = 0, padx = 5, pady=(5,0), sticky = W)
+        self.comment_entry.grid(row=6, column=0, columnspan=2, padx = 5, pady = 5, sticky = EW)
+
+        # Initializes object attributes
+        self.cur_c = 0
+        self.correct_list = [''] * len(self.df)
+        self.comments_list = [''] * len(self.df)
+
+        self.compareWindow.update()
+        self.show_mark()
+
+    def show_mark(self):
         rect = self.df.iloc[self.cur_c][2]
         rect = (rect[0]-20, rect[1]-20, rect[2]+20, rect[3]+20)
         
-        # Opens and crops images for display
-        r_img=Image.open(self.master.markupfile)
+        r_img, c_img = MarkupChecker.crop_images(self.markupfile, self.correctfile, rect)
         
-        # Converts cv2 image to PIL image
-        b,g,r = cv2.split(self.master.aligned_img)
-        c_img = cv2.merge((r,g,b))
-        c_img = Image.fromarray(c_img)
-
-        width = rect[2] - rect[0]
-        height = rect[3] - rect[1]
-        ratio = width/height
-        new_width = 250
-        new_height = 250/ratio
-
-        if new_height>250:
-            new_height = 250
-            new_width = 250*ratio
-
-        new_size = (int(new_width),int(new_height))
-
-        r_img = r_img.crop(rect)
-        r_img = r_img.resize(new_size)
         r_img = ImageTk.PhotoImage(r_img)
-
-        c_img = c_img.crop(rect)
-        c_img = c_img.resize(new_size)
         c_img = ImageTk.PhotoImage(c_img)
 
         self.image_cont1.config(image=r_img)
@@ -239,11 +237,61 @@ class CheckerWindowGUI:
         self.image_cont2.config(image=c_img)
         self.image_cont2.photo = c_img
 
-        self.correction_label.config(text="Correction Number: {}".format(self.cur_c+1))
+        self.correction_label.config(text="Correction: {}/{}".format(self.cur_c+1,
+                                                                     len(self.df)))
+        self.comment_entry.delete("1.0", END)
+        self.comment_entry.insert(END, self.comments_list[self.cur_c])
+        return
 
+    def confirm_correction(self, outcome:bool):
+        # Updates the correction
+        self.correct_list[self.cur_c] = outcome
+        self.comments_list[self.cur_c] = self.comment_entry.get("1.0", "end-1c")
         self.cur_c += 1
 
+        if self.cur_c >= len(self.df):
+            if tk.messagebox.askquestion("Submit", "Submit results?") == 'yes':
+                self.end_comparison()
+            else:
+                self.cur_c -= 1
+        else:
+            self.show_mark()
+
+    def go_back(self):
+        """Reverts back to a previous correction"""
+        if self.cur_c<=0:
+            self.cur_c = 0
+            return
+        self.comments_list[self.cur_c] = self.comment_entry.get("1.0", "end-1c")
+        self.cur_c -= 1
+        self.show_mark()
+
+    def go_next(self):
+        if self.cur_c >= len(self.df)-1:
+            self.cur_c = len(self.df)-1
+            return
+        self.comments_list[self.cur_c] = self.comment_entry.get("1.0", "end-1c")
+        self.cur_c += 1
+        self.show_mark()
+
+    def end_comparison(self):
+        # Renumbers corrections
+        self.df.index = np.arange(1, len(self.df) + 1)
         
+        # Removes columns
+        self.df.drop(['index', 'coords'], inplace=True, axis=1)
+        self.df["Picked Up"] = self.correct_list
+        self.df["Comments"] = self.comments_list
+
+        # Names output columns
+        outputfile = str(pathlib.Path.home()/"Downloads")
+        outputfile += "/" + str("".join([pathlib.Path(self.markupfile).stem,
+                                         "_CorrectionResults.xlsx"]))
+        
+        # Exports data to Excel
+        self.df.to_excel(outputfile)
+        os.startfile(outputfile)
+        self.compareWindow.destroy()
 
 if __name__ == "__main__":
     root = tk.Tk()
