@@ -16,14 +16,14 @@ from PIL import Image
 POPPLER = r"\poppler-21.03.0\Library\bin"
 HIGHLIGHT_COLOR = (255,0,255)
 COLOR_BOUNDARIES = {
-    "red1":{"lower":[0, 50, 50], "upper":[10, 255, 255]},
-    "red2":{"lower":[170, 50, 50], "upper":[180, 255, 255]},
+    "red1":{"lower":[0, 40, 40], "upper":[10, 255, 255]},
+    "red2":{"lower":[170, 40, 40], "upper":[180, 255, 255]},
     "green":{"lower":[40, 50, 50], "upper":[85, 255, 255]},
     "blue":{"lower":[86,50,50], "upper":[140, 255, 255]},
     "yellow":{"lower":[20, 50, 50], "upper":[35, 255, 255]},
 }
 CONTOUR_BUFFER = 20
-AREA_LIMIT = 10
+AREA_LIMIT = 1000
 
 # Alignment Macros
 MAX_FEATURES = 500
@@ -47,7 +47,7 @@ class MarkupChecker():
         if (file_ext == ".pdf"):
             # If the file is a pdf, we only want the first page as an image
             doc = fitz.open(filepath)
-            zoom = 1
+            zoom = 3
             mat = fitz.Matrix(zoom, zoom)
             page = doc.load_page(0)
             pix = page.get_pixmap(matrix = mat)
@@ -63,6 +63,8 @@ class MarkupChecker():
         """Finds the markups and outputs a dataframe of ROI data"""
         dwg = MarkupChecker.convert2jpg(dwg)
         image = cv2.imread(dwg)
+        area_limit = int(image.shape[0] * image.shape[1] * .00003)
+        print(area_limit)
         hsvImage=cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
         
         contour_dict = {"color":[], "coords":[]}
@@ -83,15 +85,24 @@ class MarkupChecker():
 
             # Creating ROIs for clusters
             rects, _, _ = MarkupChecker.clusterize(
-                coord_lst, type_lst=[color] * len(contours), buffer = CONTOUR_BUFFER)
-            contour_dict["color"] += [color] * len(rects)
+                coord_lst, type_lst=[color] * len(contours), 
+                buffer = CONTOUR_BUFFER, area_limit=area_limit)
+            if "red" in color:
+                contour_dict["color"] += ["red"] * len(rects)
+            else:
+                contour_dict["color"] += [color] * len(rects)
             contour_dict["coords"] += rects
 
-        return pd.DataFrame({"color":contour_dict["color"], 
-                             "coords":contour_dict["coords"]}).reset_index()
+        # Merges the two red regions
+        rectangles, colors, _ = MarkupChecker.clusterize(
+            contour_dict["coords"], type_lst=contour_dict["color"],
+            area_limit=area_limit)
+
+        return pd.DataFrame({"color":colors, "coords":rectangles}).reset_index()
     
     # region ROI Clustering
-    def clusterize(rect_lst:list, type_lst:list = [], tag_lst:list = [], buffer:int=1)->list:
+    def clusterize(rect_lst:list, type_lst:list = [], tag_lst:list = [], buffer:int=1,
+                   area_limit = AREA_LIMIT)->list:
         """Creates a list of clusted rectangles"""
         clusters = []
         tags = []
@@ -124,7 +135,7 @@ class MarkupChecker():
             # Creates new clusters
             if not matched:
                 # Filters out rectangles that are too small
-                if (rect[2]-rect[0])*(rect[3]-rect[1])<AREA_LIMIT: continue
+                if (rect[2]-rect[0])*(rect[3]-rect[1])<area_limit: continue
 
                 # Adds tags to the cluster
                 if tag_lst: 
@@ -166,7 +177,7 @@ class MarkupChecker():
         for row in markup_df.iloc:
             rect = row['coords']
             cv2.rectangle(image,(rect[0],rect[1]),(rect[2],rect[3]),HIGHLIGHT_COLOR, 2)
-            cv2.putText(image,str(row["index"]+1),(rect[0]+5,rect[1]+20), 
+            cv2.putText(image,str(row["index"]+1),(rect[0]+5,rect[1]+15), 
                         cv2.FONT_HERSHEY_SIMPLEX, .5,HIGHLIGHT_COLOR,1,cv2.LINE_AA)
         
         if show:

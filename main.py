@@ -123,12 +123,17 @@ class MarkupCheckerGUI:
 
     def highlight_markups(self)->None:
         markup_file = self.markupfile
+        m_filename = pathlib.Path(markup_file).stem
         if (not os.path.exists(markup_file)):
             tk.messagebox.showwarning('Error','File {} does not exist'.format(markup_file),icon = 'error')
             return
         
         correct_df = MarkupChecker.find_markups(markup_file)
-        MarkupChecker.draw_markup_highlights(markup_file,correct_df, show=True)
+        markup_img = MarkupChecker.draw_markup_highlights(markup_file,correct_df)
+        downloads = str(pathlib.Path.home()/"Downloads")
+        highlight_output = str(pathlib.Path.home()/"Downloads"/"".join([m_filename,"_Highlighted.jpg"]))
+        cv2.imwrite(highlight_output, markup_img)
+        os.startfile(highlight_output)
 
 class CheckerWindowGUI:
     def __init__(self, master, df:pd.DataFrame) -> None:
@@ -137,30 +142,30 @@ class CheckerWindowGUI:
 
         bgcolor = "#7f007f"
         
-        compareWindow=tk.Toplevel(self.master.master)
-        compareWindow.title("Comparing Marks")
-        compareWindow.geometry("810x550")
-        compareWindow.grab_set()
-        compareWindow.config(bg=bgcolor)
+        self.compareWindow=tk.Toplevel(self.master.master)
+        self.compareWindow.title("Comparing Marks")
+        #compareWindow.geometry("810x550")
+        self.compareWindow.grab_set()
+        self.compareWindow.config(bg=bgcolor)
 
         self.cur_c= 0
 
-        checkFrame=tk.Frame(compareWindow,bg=bgcolor)
+        checkFrame=tk.Frame(self.compareWindow,bg=bgcolor)
         checkFrame.pack()
 
-        reference_frame = tk.Frame()
+        reference_frame = tk.Frame(checkFrame, bg = bgcolor)
 
-        imageframe1=tk.Frame(checkFrame,bg=bgcolor,width=400,height=400)
-        imageframe2=tk.Frame(checkFrame,bg=bgcolor,width=400,height=400)
+        imageframe1=tk.Frame(reference_frame,bg=bgcolor,width=400,height=400)
+        imageframe2=tk.Frame(reference_frame,bg=bgcolor,width=400,height=400)
 
-        panel2_label=tk.Label(checkFrame,text="Corrected Image",bg=bgcolor,font=('arial black', 12))
-        panel1_label=tk.Label(checkFrame,text="Marked Image",bg=bgcolor,font=('arial black', 12))
+        panel2_label=tk.Label(reference_frame,text="Corrected Image",bg=bgcolor,font=('arial black', 12))
+        panel1_label=tk.Label(reference_frame,text="Marked Image",bg=bgcolor,font=('arial black', 12))
 
         self.image_cont1=tk.Label(imageframe1)
         self.image_cont2=tk.Label(imageframe2)
         self.prompt_label=tk.Label(checkFrame,
                                    text="Have the corrections in this section been made?", bg=bgcolor,font=('arial black', 18))
-        self.correction_label=tk.Label(checkFrame,text="Correction Number: {}".format(self.cur_c), bg=bgcolor,font=('arial black', 18))
+        self.correction_label=tk.Label(checkFrame, bg=bgcolor,font=('arial black', 18))
         
         self.inputbox = tk.Entry(checkFrame, exportselection=0)
 
@@ -179,16 +184,19 @@ class CheckerWindowGUI:
         
         panel1_label.grid(row=0,column=0)
         panel2_label.grid(row=0,column=1)
+
         imageframe1.grid(row=1, column=0)
         imageframe2.grid(row=1, column=1)
+
+        self.image_cont1.pack()
+        self.image_cont2.pack()
+
+        reference_frame.grid(row=0,column=0,columnspan=2)
 
         self.prompt_label.grid(row=3, column=0, columnspan=2)
         self.correction_label.grid(row=2, column=0, columnspan=2)
         self.confirmButton.grid(row=4,column=0)
         self.declineButton.grid(row=4,column=1)
-
-        panel1_label.place(relx=.5,rely=.5,anchor=CENTER)
-        panel2_label.place(relx=.5,rely=.5,anchor=CENTER)
 
         self.next_mark()
 
@@ -196,39 +204,42 @@ class CheckerWindowGUI:
         if self.cur_c >= len(self.df):
             return
         rect = self.df.iloc[self.cur_c][2]
+        rect = (rect[0]-20, rect[1]-20, rect[2]+20, rect[3]+20)
         
         # Opens and crops images for display
         r_img=Image.open(self.master.markupfile)
+        
+        # Converts cv2 image to PIL image
         b,g,r = cv2.split(self.master.aligned_img)
         c_img = cv2.merge((r,g,b))
         c_img = Image.fromarray(c_img)
 
-        sizeLimit=400
+        width = rect[2] - rect[0]
+        height = rect[3] - rect[1]
+        ratio = width/height
+        new_width = 250
+        new_height = 250/ratio
 
-        croping=(rect[0],rect[2],rect[1],rect[3])
-        width=rect[2]-rect[0]
-        height=rect[3]-rect[1]
+        if new_height>250:
+            new_height = 250
+            new_width = 250*ratio
 
-        # Sets the right cropping ratio for display
-        ratio=width/height
-        new_height=sizeLimit
-        new_width=int(ratio*new_height)
-        if new_width>sizeLimit:
-            ratio=width/height
-            new_width=sizeLimit
-            new_height=int(new_width/ratio)
-        newSize=(new_width,new_height)
+        new_size = (int(new_width),int(new_height))
 
-        r_img = r_img.crop(croping)
-        r_img = r_img.resize(newSize)
+        r_img = r_img.crop(rect)
+        r_img = r_img.resize(new_size)
         r_img = ImageTk.PhotoImage(r_img)
 
-        c_img = c_img.crop(croping)
-        c_img = c_img.resize(newSize)
+        c_img = c_img.crop(rect)
+        c_img = c_img.resize(new_size)
         c_img = ImageTk.PhotoImage(c_img)
 
         self.image_cont1.config(image=r_img)
+        self.image_cont1.photo = r_img
         self.image_cont2.config(image=c_img)
+        self.image_cont2.photo = c_img
+
+        self.correction_label.config(text="Correction Number: {}".format(self.cur_c+1))
 
         self.cur_c += 1
 
